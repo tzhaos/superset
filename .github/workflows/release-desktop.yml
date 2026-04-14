@@ -58,7 +58,17 @@ jobs:
           pattern: desktop-*
           merge-multiple: true
 
+      - name: Check for macOS manifests
+        id: check_mac
+        run: |
+          if ls release-artifacts/*-mac.yml 1> /dev/null 2>&1; then
+            echo "has_mac=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_mac=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Merge macOS auto-update manifests
+        if: steps.check_mac.outputs.has_mac == 'true'
         uses: ./.github/actions/merge-mac-manifests
         with:
           artifact-prefix: desktop
@@ -97,6 +107,26 @@ jobs:
               arch=$(echo "$file" | sed -E 's/.*-([^-]+)\.AppImage$/\1/')
               cp "$file" "Superset-${arch}.AppImage"
               echo "Created stable copy: Superset-${arch}.AppImage"
+            fi
+          done
+          for file in *.exe; do
+            if [[ -f "$file" ]]; then
+              arch=$(echo "$file" | sed -E 's/.*-([^-]+)\.exe$/\1/')
+              if [[ "$arch" =~ ^[0-9]+\.[0-9]+\.[0-9] ]]; then
+                arch="x64"
+              fi
+              cp "$file" "Superset-${arch}.exe"
+              echo "Created stable copy: Superset-${arch}.exe"
+            fi
+          done
+          for file in *.msi; do
+            if [[ -f "$file" ]]; then
+              arch=$(echo "$file" | sed -E 's/.*-([^-]+)\.msi$/\1/')
+              if [[ "$arch" =~ ^[0-9]+\.[0-9]+\.[0-9] ]]; then
+                arch="x64"
+              fi
+              cp "$file" "Superset-${arch}.msi"
+              echo "Created stable copy: Superset-${arch}.msi"
             fi
           done
           # Keep Linux updater manifest at a stable filename for generic provider lookups.

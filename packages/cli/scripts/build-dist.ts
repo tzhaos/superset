@@ -30,12 +30,13 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import extract from "extract-zip";
 
-type Target = "darwin-arm64" | "linux-x64";
+type Target = "darwin-arm64" | "darwin-x64" | "linux-x64" | "win32-x64";
 
-const VALID_TARGETS: Target[] = ["darwin-arm64", "linux-x64"];
+const VALID_TARGETS: Target[] = ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"];
 const NODE_VERSION = "22.13.0";
 
 /**
@@ -57,7 +58,9 @@ const NATIVE_PACKAGES = [
  */
 const TARGET_NATIVE_PACKAGES: Record<Target, string[]> = {
 	"darwin-arm64": ["@libsql/darwin-arm64", "@parcel/watcher-darwin-arm64"],
+	"darwin-x64": ["@libsql/darwin-x64", "@parcel/watcher-darwin-x64"],
 	"linux-x64": ["@libsql/linux-x64-gnu", "@parcel/watcher-linux-x64-glibc"],
+	"win32-x64": ["@libsql/win32-x64-msvc", "@parcel/watcher-win32-x64"],
 };
 
 /**
@@ -85,12 +88,21 @@ function parseArgs(): { target: Target } {
 
 function nodeArchiveName(target: Target): string {
 	const arch = target === "darwin-arm64" ? "arm64" : "x64";
-	const platform = target === "darwin-arm64" ? "darwin" : "linux";
+	const platform =
+		target === "darwin-arm64" || target === "darwin-x64"
+			? "darwin"
+			: target === "win32-x64"
+				? "win"
+				: "linux";
 	return `node-v${NODE_VERSION}-${platform}-${arch}`;
 }
 
+function nodeArchiveExt(target: Target): string {
+	return target === "win32-x64" ? ".zip" : ".tar.gz";
+}
+
 function nodeDownloadUrl(target: Target): string {
-	return `https://nodejs.org/dist/v${NODE_VERSION}/${nodeArchiveName(target)}.tar.gz`;
+	return `https://nodejs.org/dist/v${NODE_VERSION}/${nodeArchiveName(target)}${nodeArchiveExt(target)}`;
 }
 
 async function exec(cmd: string, args: string[], cwd?: string): Promise<void> {
@@ -115,7 +127,8 @@ async function downloadAndExtractNode(
 	if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
 
 	const archiveName = nodeArchiveName(target);
-	const archivePath = join(cacheDir, `${archiveName}.tar.gz`);
+	const archiveExt = nodeArchiveExt(target);
+	const archivePath = join(cacheDir, `${archiveName}${archiveExt}`);
 	const extractedPath = join(cacheDir, archiveName);
 
 	if (!existsSync(archivePath)) {
@@ -125,13 +138,22 @@ async function downloadAndExtractNode(
 
 	if (!existsSync(extractedPath)) {
 		console.log(`[build-dist] extracting Node.js for ${target}`);
-		await exec("tar", ["-xzf", archivePath, "-C", cacheDir]);
+		if (target === "win32-x64") {
+			await extract(archivePath, { dir: extractedPath });
+		} else {
+			await exec("tar", ["-xzf", archivePath, "-C", cacheDir]);
+		}
 	}
 
-	const sourceBinary = join(extractedPath, "bin", "node");
-	const destBinary = join(destDir, "node");
+	const sourceBinary =
+		target === "win32-x64"
+			? join(extractedPath, `${archiveName}`, "node.exe")
+			: join(extractedPath, "bin", "node");
+	const destBinary = join(destDir, target === "win32-x64" ? "node.exe" : "node");
 	cpSync(sourceBinary, destBinary);
-	chmodSync(destBinary, 0o755);
+	if (target !== "win32-x64") {
+		chmodSync(destBinary, 0o755);
+	}
 	return destBinary;
 }
 
@@ -291,7 +313,14 @@ async function buildHostService(): Promise<string> {
 	return join(hostServiceDir, "dist", "host-service.js");
 }
 
-function writeHostWrapper(binDir: string): void {
+function writeHostWrapper(binDir: string, target: Target): void {
+	if (target === "win32-x64") {
+		const wrapper = `@echo off\nset NODE_PATH=%~dp0..\\lib\\node_modules\n"%~dp0..\\lib\\node.exe" "%~dp0..\\lib\\host-service.js" %*\n`;
+		const wrapperPath = join(binDir, "superset-host.cmd");
+		writeFileSync(wrapperPath, wrapper);
+		return;
+	}
+
 	const wrapper = `#!/bin/sh
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export NODE_PATH="$SCRIPT_DIR/../lib/node_modules"
@@ -316,7 +345,8 @@ async function main(): Promise<void> {
 	console.log(`[build-dist] staging: ${stagingRoot}`);
 
 	console.log("[build-dist] building CLI binary");
-	await buildCli(target, join(stagingRoot, "bin", "superset"));
+	const cliBinaryName = target === "win32-x64" ? "superset.exe" : "superset";
+	await buildCli(target, join(stagingRoot, "bin", cliBinaryName));
 
 	console.log("[build-dist] building host-service bundle");
 	const hostServiceBundle = await buildHostService();
@@ -338,15 +368,31 @@ async function main(): Promise<void> {
 	});
 
 	console.log("[build-dist] writing host wrapper");
-	writeHostWrapper(join(stagingRoot, "bin"));
+	writeHostWrapper(join(stagingRoot, "bin"), target);
 
-	const tarball = join(cliDir, "dist", `superset-${target}.tar.gz`);
-	console.log(`[build-dist] creating ${tarball}`);
-	// Tar from inside the staging dir so contents extract directly to the
-	// install target (no top-level superset-<target>/ wrapper).
-	await exec("tar", ["-czf", tarball, "-C", stagingRoot, "."]);
-
-	console.log(`[build-dist] done: ${tarball}`);
+	if (target === "win32-x64") {
+		const zipPath = join(cliDir, "dist", `superset-${target}.zip`);
+		console.log(`[build-dist] creating ${zipPath}`);
+		try {
+			await exec("powershell", [
+				"-Command",
+				`Get-ChildItem -Path '${stagingRoot}' | Compress-Archive -DestinationPath '${zipPath}' -Force`,
+			]);
+			console.log(`[build-dist] done: ${zipPath}`);
+		} catch {
+			console.warn("[build-dist] Compress-Archive failed, falling back to tar.gz");
+			const tarball = join(cliDir, "dist", `superset-${target}.tar.gz`);
+			await exec("tar", ["-czf", tarball, "-C", stagingRoot, "."]);
+			console.log(`[build-dist] done: ${tarball}`);
+		}
+	} else {
+		const tarball = join(cliDir, "dist", `superset-${target}.tar.gz`);
+		console.log(`[build-dist] creating ${tarball}`);
+		// Tar from inside the staging dir so contents extract directly to the
+		// install target (no top-level superset-<target>/ wrapper).
+		await exec("tar", ["-czf", tarball, "-C", stagingRoot, "."]);
+		console.log(`[build-dist] done: ${tarball}`);
+	}
 }
 
 await main();

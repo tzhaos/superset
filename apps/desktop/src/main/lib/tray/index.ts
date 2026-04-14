@@ -15,6 +15,7 @@ import {
 	type HostServiceStatusEvent,
 } from "main/lib/host-service-coordinator";
 import { menuEmitter } from "main/lib/menu-events";
+import { PLATFORM } from "shared/constants";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -73,7 +74,9 @@ function createTrayIcon(): Electron.NativeImage | null {
 		if (size.width > 22 || size.height > 22) {
 			image = image.resize({ width: 16, height: 16 });
 		}
-		image.setTemplateImage(true);
+		if (PLATFORM.IS_MAC) {
+			image.setTemplateImage(true);
+		}
 		return image;
 	} catch (error) {
 		console.warn("[Tray] Failed to load icon:", error);
@@ -234,10 +237,6 @@ function updateTrayMenu(): void {
 export function initTray(): void {
 	if (tray) {
 		console.warn("[Tray] Already initialized");
-		return;
-	}
-
-	if (process.platform !== "darwin") {
 		return;
 	}
 

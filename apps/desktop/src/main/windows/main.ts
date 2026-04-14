@@ -114,9 +114,9 @@ export async function MainWindow() {
 		resizable: true,
 		alwaysOnTop: false,
 		autoHideMenuBar: true,
-		frame: false,
-		titleBarStyle: "hidden",
-		trafficLightPosition: { x: 16, y: 16 },
+		frame: PLATFORM.IS_WINDOWS,
+		titleBarStyle: PLATFORM.IS_MAC ? "hidden" : "default",
+		...(PLATFORM.IS_MAC ? { trafficLightPosition: { x: 16, y: 16 } } : {}),
 		webPreferences: {
 			preload: join(__dirname, "../preload/index.js"),
 			webviewTag: true,

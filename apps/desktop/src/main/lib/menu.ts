@@ -1,5 +1,6 @@
 import { COMPANY } from "@superset/shared/constants";
 import { app, BrowserWindow, Menu, shell } from "electron";
+import { PLATFORM } from "shared/constants";
 import { env } from "main/env.main";
 import { resetTerminalStateDev } from "main/lib/terminal/dev-reset";
 import {
@@ -134,36 +135,38 @@ export function createApplicationMenu() {
 		});
 	}
 
-	if (process.platform === "darwin") {
-		template.unshift({
-			label: app.name,
-			submenu: [
-				{ role: "about" },
-				{ type: "separator" },
-				{
-					label: "Settings...",
-					accelerator: openSettingsAccelerator,
-					click: () => {
-						menuEmitter.emit("open-settings");
-					},
+	template.unshift({
+		label: app.name,
+		submenu: [
+			{ role: "about" },
+			{ type: "separator" },
+			{
+				label: "Settings...",
+				accelerator: openSettingsAccelerator,
+				click: () => {
+					menuEmitter.emit("open-settings");
 				},
-				{
-					label: "Check for Updates...",
-					click: () => {
-						checkForUpdatesInteractive();
-					},
+			},
+			{
+				label: "Check for Updates...",
+				click: () => {
+					checkForUpdatesInteractive();
 				},
-				{ type: "separator" },
-				{ role: "services" },
-				{ type: "separator" },
-				{ role: "hide" },
-				{ role: "hideOthers" },
-				{ role: "unhide" },
-				{ type: "separator" },
-				{ role: "quit" },
-			],
-		});
-	}
+			},
+			{ type: "separator" },
+			...(PLATFORM.IS_MAC
+				? [
+						{ role: "services" } as MenuItemConstructorOptions,
+						{ type: "separator" } as MenuItemConstructorOptions,
+						{ role: "hide" } as MenuItemConstructorOptions,
+						{ role: "hideOthers" } as MenuItemConstructorOptions,
+						{ role: "unhide" } as MenuItemConstructorOptions,
+						{ type: "separator" } as MenuItemConstructorOptions,
+					]
+				: []),
+			{ role: "quit" },
+		],
+	});
 
 	const menu = Menu.buildFromTemplate(template);
 	Menu.setApplicationMenu(menu);

@@ -1,6 +1,10 @@
 "use client";
 
-import { COMPANY, DOWNLOAD_URL_MAC_ARM64 } from "@superset/shared/constants";
+import {
+	COMPANY,
+	DOWNLOAD_URL_MAC_ARM64,
+	DOWNLOAD_URL_WIN_X64,
+} from "@superset/shared/constants";
 import { HiMiniArrowDownTray, HiMiniClock } from "react-icons/hi2";
 import { track } from "@/lib/analytics";
 import { usePlatform } from "../../hooks/useOS";
@@ -75,8 +79,18 @@ export function DownloadButton({
 				title: "Other platforms",
 				items: [
 					{
+						id: "windows-download",
+						label: "Download for Windows",
+						icon: <HiMiniArrowDownTray className="size-4" />,
+						onClick: () => {
+							track("download_clicked");
+							window.open(DOWNLOAD_URL_WIN_X64, "_blank");
+						},
+						variant: "primary",
+					},
+					{
 						id: "waitlist",
-						label: "Join waitlist for Windows & Linux",
+						label: "Join waitlist for Linux",
 						icon: <HiMiniClock className="size-4" />,
 						onClick: () => {
 							track("waitlist_clicked");
@@ -116,6 +130,23 @@ export function DownloadButton({
 				}}
 			>
 				<span className="hidden sm:inline">Download for macOS</span>
+				<span className="sm:hidden">Download</span>
+				<HiMiniArrowDownTray className="size-4" />
+			</button>
+		);
+	}
+
+	if (os === "windows") {
+		return (
+			<button
+				type="button"
+				className={buttonClasses}
+				onClick={() => {
+					track("download_clicked");
+					window.open(DOWNLOAD_URL_WIN_X64, "_blank");
+				}}
+			>
+				<span className="hidden sm:inline">Download for Windows</span>
 				<span className="sm:hidden">Download</span>
 				<HiMiniArrowDownTray className="size-4" />
 			</button>

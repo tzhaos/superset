@@ -1,4 +1,5 @@
 import treeKill from "tree-kill";
+import { PLATFORM } from "shared/constants";
 
 const DEFAULT_ESCALATION_TIMEOUT_MS = 2000;
 const POLL_INTERVAL_MS = 50;
@@ -30,6 +31,11 @@ export function treeKillWithEscalation({
 	signal?: string;
 	escalationTimeoutMs?: number;
 }): Promise<{ success: boolean; error?: string }> {
+	// Windows does not support POSIX signal escalation; use SIGKILL directly.
+	if (PLATFORM.IS_WINDOWS) {
+		return treeKillAsync(pid, "SIGKILL").then(() => ({ success: true }));
+	}
+
 	return new Promise((resolve) => {
 		let resolved = false;
 		let pollTimer: ReturnType<typeof setInterval> | null = null;

@@ -8,6 +8,7 @@ import { getDeviceName, getHashedDeviceId } from "@superset/shared/device-info";
 import { app } from "electron";
 import { env } from "main/env.main";
 import { env as sharedEnv } from "shared/env.shared";
+import { PLATFORM } from "shared/constants";
 import { getProcessEnvWithShellPath } from "../../lib/trpc/routers/workspaces/utils/shell-env";
 import { SUPERSET_HOME_DIR } from "./app-environment";
 import {
@@ -94,6 +95,18 @@ async function pollHealthCheck(
 	return false;
 }
 
+function killProcessGraceful(
+	target: { kill(signal?: string): void },
+	pid?: number,
+): void {
+	// Windows does not support POSIX signals; use default kill.
+	if (PLATFORM.IS_WINDOWS) {
+		target.kill();
+	} else {
+		target.kill("SIGTERM");
+	}
+}
+
 export class HostServiceCoordinator extends EventEmitter {
 	private instances = new Map<string, HostServiceProcess>();
 	private pendingStarts = new Map<string, Promise<Connection>>();
@@ -144,7 +157,7 @@ export class HostServiceCoordinator extends EventEmitter {
 		instance.status = "stopped";
 
 		try {
-			process.kill(instance.pid, "SIGTERM");
+			killProcessGraceful(process, instance.pid);
 		} catch {}
 
 		this.instances.delete(organizationId);
@@ -240,7 +253,7 @@ export class HostServiceCoordinator extends EventEmitter {
 				`[host-service:${organizationId}] Adopted service version ${version} < ${MIN_HOST_SERVICE_VERSION}, killing`,
 			);
 			try {
-				process.kill(manifest.pid, "SIGTERM");
+				killProcessGraceful(process, manifest.pid);
 			} catch {}
 			removeManifest(organizationId);
 			return null;
@@ -350,7 +363,7 @@ export class HostServiceCoordinator extends EventEmitter {
 		const endpoint = `http://127.0.0.1:${port}`;
 		const healthy = await pollHealthCheck(endpoint, secret);
 		if (!healthy) {
-			child.kill("SIGTERM");
+			killProcessGraceful(child);
 			this.instances.delete(organizationId);
 			throw new Error(
 				`Host service failed to start within ${HEALTH_POLL_TIMEOUT}ms`,

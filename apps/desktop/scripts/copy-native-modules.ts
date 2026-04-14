@@ -22,7 +22,10 @@ import {
 	readdirSync,
 	readFileSync,
 	realpathSync,
+	rmdirSync,
 	rmSync,
+	unlinkSync,
+	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { satisfies } from "semver";
@@ -64,6 +67,23 @@ function findBunStoreFolderName(
 	return entries.find((entry) => entry.startsWith(modulePrefix)) ?? null;
 }
 
+function removeSymlink(modulePath: string): void {
+	try {
+		rmSync(modulePath, { recursive: true, force: true });
+	} catch (error) {
+		if (process.platform === "win32") {
+			// Bun rmSync can fail on directory symlinks on Windows
+			try {
+				rmdirSync(modulePath);
+			} catch {
+				unlinkSync(modulePath);
+			}
+		} else {
+			throw error;
+		}
+	}
+}
+
 function copyModuleIfSymlink(
 	nodeModulesDir: string,
 	moduleName: string,
@@ -97,8 +117,7 @@ function copyModuleIfSymlink(
 		console.log(`  ${moduleName}: symlink -> replacing with real files`);
 		console.log(`    Real path: ${realPath}`);
 
-		// Remove the symlink
-		rmSync(modulePath);
+		removeSymlink(modulePath);
 
 		// Copy the actual files
 		cpSync(realPath, modulePath, { recursive: true });
@@ -242,10 +261,8 @@ function fetchNpmPackage(
 	try {
 		mkdirSync(destPath, { recursive: true });
 		execSync(
-			`curl -sL "${url}" | tar xz -C "${destPath}" --strip-components=1`,
-			{
-				stdio: "pipe",
-			},
+			`curl -fsSL "${url}" | tar xz -C "${destPath}" --strip-components=1`,
+			{ stdio: "pipe" },
 		);
 		console.log(`    Extracted to: ${destPath}`);
 		return true;
@@ -470,7 +487,22 @@ function copyParcelWatcherPlatformPackages(nodeModulesDir: string): void {
 	}
 }
 
-function prepareNativeModules() {
+function createMacosProcessMetricsStub(nodeModulesDir: string): void {
+	const moduleName = "@superset/macos-process-metrics";
+	console.log(`  ${moduleName}: creating Windows stub`);
+	const stubPath = join(nodeModulesDir, moduleName);
+	if (existsSync(stubPath)) {
+		rmSync(stubPath, { recursive: true, force: true });
+	}
+	mkdirSync(stubPath, { recursive: true });
+	writeFileSync(
+		join(stubPath, "package.json"),
+		JSON.stringify({ name: moduleName, version: "0.0.0", main: "index.js" }),
+	);
+	writeFileSync(join(stubPath, "index.js"), "module.exports = {};");
+}
+
+function prepareNativeModules(): void {
 	console.log("Preparing external runtime modules for electron-builder...");
 	console.log(
 		`  Target: ${TARGET_PLATFORM}/${TARGET_ARCH} (host: ${process.platform}/${process.arch})`,
@@ -481,6 +513,10 @@ function prepareNativeModules() {
 
 	console.log("\nMaterializing packaged runtime modules...");
 	for (const moduleName of requiredMaterializedNodeModules) {
+		if (process.platform === "win32" && moduleName === "@superset/macos-process-metrics") {
+			createMacosProcessMetricsStub(nodeModulesDir);
+			continue;
+		}
 		copyModuleIfSymlink(nodeModulesDir, moduleName, true);
 	}
 

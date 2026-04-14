@@ -85,6 +85,10 @@ const config: Configuration = {
 		// before building (required for Bun 1.3+ isolated installs).
 		...packagedNodeModuleCopies,
 		"!**/.DS_Store",
+		"!resources/build/icons/*.icns",
+		"!resources/build/installer/background.tiff",
+		"!resources/build/entitlements.mac.plist",
+		"!resources/build/entitlements.mac.inherit.plist",
 	],
 
 	// Rebuild native modules for Electron's Node.js version
@@ -148,14 +152,25 @@ const config: Configuration = {
 				target: "nsis",
 				arch: ["x64"],
 			},
+			{
+				target: "msi",
+				arch: ["x64"],
+			},
 		],
 		artifactName: `${productName}-${pkg.version}-\${arch}.\${ext}`,
+		signAndEditExecutable: false,
 	},
 
 	// NSIS installer (Windows)
 	nsis: {
 		oneClick: false,
 		allowToChangeInstallationDirectory: true,
+	},
+
+	// MSI installer (Windows)
+	msi: {
+		oneClick: false,
+		perMachine: false,
 	},
 };
 

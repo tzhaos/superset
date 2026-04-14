@@ -27,9 +27,10 @@ import { connect, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { app } from "electron";
-import { SUPERSET_DIR_NAME } from "shared/constants";
+import { PLATFORM, SUPERSET_DIR_NAME } from "shared/constants";
 import { throwIfAborted } from "../terminal/abort";
 import { TerminalAttachCanceledError } from "../terminal/errors";
+import { getTerminalHostSocketPath } from "./socket-path";
 import {
 	type CancelCreateOrAttachRequest,
 	type ClearScrollbackRequest,
@@ -72,7 +73,7 @@ const DEBUG_CLIENT = process.env.SUPERSET_TERMINAL_DEBUG === "1";
 // Get from shared constants for multi-worktree support (imported at top of file)
 const SUPERSET_HOME_DIR = join(homedir(), SUPERSET_DIR_NAME);
 
-const SOCKET_PATH = join(SUPERSET_HOME_DIR, "terminal-host.sock");
+const SOCKET_PATH = getTerminalHostSocketPath();
 const TOKEN_PATH = join(SUPERSET_HOME_DIR, "terminal-host.token");
 const PID_PATH = join(SUPERSET_HOME_DIR, "terminal-host.pid");
 const SPAWN_LOCK_PATH = join(SUPERSET_HOME_DIR, "terminal-host.spawn.lock");
@@ -278,11 +279,13 @@ export class TerminalHostClient extends EventEmitter {
 		this.connectionState = ConnectionState.CONNECTING;
 
 		try {
-			const socketPathExisted = existsSync(SOCKET_PATH);
 			const connected = await this.tryConnectControl();
 			if (!connected) {
 				this.resetConnectionState({ emitDisconnected: false });
-				if (!socketPathExisted && !existsSync(SOCKET_PATH)) {
+				if (!PLATFORM.IS_WINDOWS && !existsSync(SOCKET_PATH)) {
+					return false;
+				}
+				if (PLATFORM.IS_WINDOWS) {
 					return false;
 				}
 				throw new Error(
@@ -338,7 +341,7 @@ export class TerminalHostClient extends EventEmitter {
 			return true;
 		}
 
-		if (!existsSync(SOCKET_PATH)) {
+		if (PLATFORM.IS_WINDOWS || !existsSync(SOCKET_PATH)) {
 			return false;
 		}
 
@@ -484,7 +487,11 @@ export class TerminalHostClient extends EventEmitter {
 			const pid = Number.parseInt(raw, 10);
 			if (!Number.isNaN(pid)) {
 				try {
-					process.kill(pid, "SIGTERM");
+					if (PLATFORM.IS_WINDOWS) {
+						process.kill(pid);
+					} else {
+						process.kill(pid, "SIGTERM");
+					}
 				} catch {
 					// Best-effort; PID may be stale or process already exited.
 				}
@@ -496,7 +503,7 @@ export class TerminalHostClient extends EventEmitter {
 
 	private async tryConnectControl(): Promise<boolean> {
 		return new Promise((resolve) => {
-			if (!existsSync(SOCKET_PATH)) {
+			if (!PLATFORM.IS_WINDOWS && !existsSync(SOCKET_PATH)) {
 				resolve(false);
 				return;
 			}
@@ -544,7 +551,7 @@ export class TerminalHostClient extends EventEmitter {
 
 	private async tryConnectStream(): Promise<boolean> {
 		return new Promise((resolve) => {
-			if (!existsSync(SOCKET_PATH)) {
+			if (!PLATFORM.IS_WINDOWS && !existsSync(SOCKET_PATH)) {
 				resolve(false);
 				return;
 			}
@@ -898,7 +905,7 @@ export class TerminalHostClient extends EventEmitter {
 	}: {
 		killSessions?: boolean;
 	} = {}): Promise<void> {
-		if (!existsSync(SOCKET_PATH)) return;
+		if (!PLATFORM.IS_WINDOWS && !existsSync(SOCKET_PATH)) return;
 
 		const token = this.readAuthToken();
 
@@ -993,7 +1000,7 @@ export class TerminalHostClient extends EventEmitter {
 		const timeoutMs = 2000;
 
 		while (Date.now() - startTime < timeoutMs) {
-			if (!existsSync(SOCKET_PATH)) return;
+			if (!PLATFORM.IS_WINDOWS && !existsSync(SOCKET_PATH)) return;
 			const live = await this.isSocketLive();
 			if (!live) return;
 			await this.sleep(100);
@@ -1010,7 +1017,7 @@ export class TerminalHostClient extends EventEmitter {
 	 */
 	private isSocketLive(): Promise<boolean> {
 		return new Promise((resolve) => {
-			if (!existsSync(SOCKET_PATH)) {
+			if (!PLATFORM.IS_WINDOWS && !existsSync(SOCKET_PATH)) {
 				resolve(false);
 				return;
 			}
@@ -1044,10 +1051,12 @@ export class TerminalHostClient extends EventEmitter {
 			if (!existsSync(SUPERSET_HOME_DIR)) {
 				mkdirSync(SUPERSET_HOME_DIR, { recursive: true, mode: 0o700 });
 			}
-			try {
-				chmodSync(SUPERSET_HOME_DIR, 0o700);
-			} catch {
-				// Best-effort.
+			if (!PLATFORM.IS_WINDOWS) {
+				try {
+					chmodSync(SUPERSET_HOME_DIR, 0o700);
+				} catch {
+					// Best-effort.
+				}
 			}
 
 			// Check if lock exists and is recent (within timeout)
@@ -1092,7 +1101,8 @@ export class TerminalHostClient extends EventEmitter {
 	private async spawnDaemon(): Promise<void> {
 		// Check if socket is live first - this is the authoritative check
 		// PID file can be stale if daemon crashed and PID was reused by another process
-		if (existsSync(SOCKET_PATH)) {
+		const shouldCheckLive = PLATFORM.IS_WINDOWS || existsSync(SOCKET_PATH);
+		if (shouldCheckLive) {
 			const isLive = await this.isSocketLive();
 			if (isLive) {
 				if (DEBUG_CLIENT) {
@@ -1101,14 +1111,16 @@ export class TerminalHostClient extends EventEmitter {
 				return;
 			}
 
-			// Socket exists but not responsive - safe to remove
-			if (DEBUG_CLIENT) {
-				console.log("[TerminalHostClient] Removing stale socket file");
-			}
-			try {
-				unlinkSync(SOCKET_PATH);
-			} catch {
-				// Ignore - might not have permission
+			// Socket exists but not responsive - safe to remove (Unix only)
+			if (!PLATFORM.IS_WINDOWS && existsSync(SOCKET_PATH)) {
+				if (DEBUG_CLIENT) {
+					console.log("[TerminalHostClient] Removing stale socket file");
+				}
+				try {
+					unlinkSync(SOCKET_PATH);
+				} catch {
+					// Ignore - might not have permission
+				}
 			}
 		}
 
@@ -1172,10 +1184,12 @@ export class TerminalHostClient extends EventEmitter {
 					}
 				}
 				logFd = openSync(logPath, "a", 0o600);
-				try {
-					chmodSync(logPath, 0o600);
-				} catch {
-					// Best-effort.
+				if (!PLATFORM.IS_WINDOWS) {
+					try {
+						chmodSync(logPath, 0o600);
+					} catch {
+						// Best-effort.
+					}
 				}
 			} catch (error) {
 				console.warn(
@@ -1260,7 +1274,11 @@ export class TerminalHostClient extends EventEmitter {
 		const startTime = Date.now();
 
 		while (Date.now() - startTime < SPAWN_WAIT_MS) {
-			if (existsSync(SOCKET_PATH)) {
+			const socketReady =
+				PLATFORM.IS_WINDOWS
+					? await this.isSocketLive()
+					: existsSync(SOCKET_PATH);
+			if (socketReady) {
 				// Give it a moment to start listening
 				await this.sleep(200);
 				return;

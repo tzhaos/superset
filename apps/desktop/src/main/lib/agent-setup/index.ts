@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { PLATFORM } from "shared/constants";
 import { setupDesktopAgentCapabilities } from "./desktop-agent-setup";
 import {
 	BASH_DIR,
@@ -20,14 +21,21 @@ export function setupAgentHooks(): void {
 
 	fs.mkdirSync(BIN_DIR, { recursive: true });
 	fs.mkdirSync(HOOKS_DIR, { recursive: true });
-	fs.mkdirSync(ZSH_DIR, { recursive: true });
-	fs.mkdirSync(BASH_DIR, { recursive: true });
 	fs.mkdirSync(OPENCODE_PLUGIN_DIR, { recursive: true });
+
+	if (!PLATFORM.IS_WINDOWS) {
+		fs.mkdirSync(ZSH_DIR, { recursive: true });
+		fs.mkdirSync(BASH_DIR, { recursive: true });
+	}
 
 	setupDesktopAgentCapabilities();
 
-	createZshWrapper();
-	createBashWrapper();
+	if (!PLATFORM.IS_WINDOWS) {
+		createZshWrapper();
+		createBashWrapper();
+	} else {
+		console.log("[agent-setup] Shell wrappers are not supported on Windows yet");
+	}
 
 	console.log("[agent-setup] Agent hooks initialized");
 }

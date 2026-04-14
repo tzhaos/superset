@@ -29,17 +29,15 @@ on:
         default: 30
 
 jobs:
-  build-macos:
-    name: Build - macOS (${{ matrix.arch }})
-    runs-on: macos-latest
-    environment: production
-
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [arm64, x64]
+  build-windows:
+    name: Build - Windows (x64)
+    runs-on: windows-latest
 
     steps:
+      - name: Enable Git long paths
+        run: git config --system core.longpaths true
+        shell: powershell
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -69,30 +67,20 @@ jobs:
         if: inputs.version_suffix != ''
         working-directory: apps/desktop
         run: |
-          # Read current version and append suffix
-          CURRENT_VERSION=$(node -p "require('./package.json').version")
-          NEW_VERSION="${CURRENT_VERSION}${{ inputs.version_suffix }}"
-          echo "Setting version to: $NEW_VERSION"
-          # Update package.json version using node
-          node -e "
-            const fs = require('fs');
-            const pkg = require('./package.json');
-            pkg.version = '$NEW_VERSION';
-            fs.writeFileSync('./package.json', JSON.stringify(pkg, null, '\t') + '\n');
-          "
-          echo "Updated package.json version to $NEW_VERSION"
+          $CURRENT_VERSION = (Get-Content package.json | ConvertFrom-Json).version
+          $NEW_VERSION = "${CURRENT_VERSION}${{ inputs.version_suffix }}"
+          Write-Host "Setting version to: $NEW_VERSION"
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          $pkg.version = $NEW_VERSION
+          $pkg | ConvertTo-Json -Depth 100 | Set-Content package.json
+          Write-Host "Updated package.json version to $NEW_VERSION"
+        shell: pwsh
 
-      - name: Clean dev folder
-        working-directory: apps/desktop
-        run: bun run clean:dev
-
-      - name: Generate file icons
-        working-directory: apps/desktop
-        run: bun run generate:icons
-
-      - name: Compile app with electron-vite
+      - name: Build Electron app
         working-directory: apps/desktop
         env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          TARGET_ARCH: x64
           NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY }}
           NEXT_PUBLIC_POSTHOG_HOST: ${{ secrets.NEXT_PUBLIC_POSTHOG_HOST }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
@@ -106,160 +94,48 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           RELAY_URL: ${{ secrets.RELAY_URL }}
           SUPERSET_WORKSPACE_NAME: superset
-        run: bun run compile:app
+        run: bun run build
 
-      - name: Build Electron app
-        working-directory: apps/desktop
-        env:
-          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          TARGET_ARCH: ${{ matrix.arch }}
-        run: bun run package -- --publish never --config ${{ inputs.electron_builder_config }} --${{ matrix.arch }}
-
-      - name: Verify app-update.yml exists
+      - name: Verify Windows artifacts exist
         working-directory: apps/desktop
         run: |
-          # electron-builder uses mac-arm64/ for arm64 and mac/ for x64 (when host is arm64)
-          APP_DIR=$(find release -maxdepth 2 -name "*.app" -type d | head -1)
-          if [ -z "$APP_DIR" ]; then
-            echo "::error::No .app bundle found in release/"
-            ls -la release/
-            exit 1
-          fi
-          echo "Found app bundle: $APP_DIR"
-          test -f "$APP_DIR/Contents/Resources/app-update.yml" || {
-            echo "::error::app-update.yml missing from $APP_DIR/Contents/Resources/ — auto-update will be broken"
+          Get-ChildItem -Path release
+          if (-not (Test-Path release/*.exe)) {
+            Write-Error "No .exe artifact generated in apps/desktop/release"
             exit 1
           }
+          if (-not (Test-Path release/*.msi)) {
+            Write-Error "No .msi artifact generated in apps/desktop/release"
+            exit 1
+          }
+          if (-not (Test-Path release/latest.yml)) {
+            Write-Error "No Windows auto-update manifest generated in apps/desktop/release"
+            exit 1
+          }
+        shell: pwsh
 
-      - name: Upload DMG artifact
+      - name: Upload Windows EXE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.artifact_prefix }}-mac-${{ matrix.arch }}-dmg
-          path: apps/desktop/release/*.dmg
+          name: ${{ inputs.artifact_prefix }}-windows-exe
+          path: apps/desktop/release/*.exe
           retention-days: ${{ inputs.artifact_retention_days }}
           if-no-files-found: error
 
-      - name: Upload ZIP artifact
+      - name: Upload Windows MSI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.artifact_prefix }}-mac-${{ matrix.arch }}-zip
-          path: apps/desktop/release/*.zip
+          name: ${{ inputs.artifact_prefix }}-windows-msi
+          path: apps/desktop/release/*.msi
           retention-days: ${{ inputs.artifact_retention_days }}
           if-no-files-found: error
 
-      - name: Upload auto-update manifest
+      - name: Upload Windows blockmap + manifest
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.artifact_prefix }}-mac-${{ matrix.arch }}-update-manifest
-          path: apps/desktop/release/*-mac.yml
-          retention-days: ${{ inputs.artifact_retention_days }}
-          if-no-files-found: error
-
-  build-linux:
-    name: Build - Linux (x64)
-    runs-on: ubuntu-latest
-    environment: production
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        id: setup-bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .bun-version
-
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
+          name: ${{ inputs.artifact_prefix }}-windows-update-manifest
           path: |
-            ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ steps.setup-bun.outputs.bun-revision }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-bun-${{ steps.setup-bun.outputs.bun-revision }}-
-
-      - name: Install dependencies
-        run: bun install --frozen --ignore-scripts
-
-      - name: Install desktop native dependencies
-        working-directory: apps/desktop
-        run: bun run install:deps
-
-      - name: Set version suffix
-        if: inputs.version_suffix != ''
-        working-directory: apps/desktop
-        run: |
-          CURRENT_VERSION=$(node -p "require('./package.json').version")
-          NEW_VERSION="${CURRENT_VERSION}${{ inputs.version_suffix }}"
-          echo "Setting version to: $NEW_VERSION"
-          node -e "
-            const fs = require('fs');
-            const pkg = require('./package.json');
-            pkg.version = '$NEW_VERSION';
-            fs.writeFileSync('./package.json', JSON.stringify(pkg, null, '\t') + '\n');
-          "
-          echo "Updated package.json version to $NEW_VERSION"
-
-      - name: Clean dev folder
-        working-directory: apps/desktop
-        run: bun run clean:dev
-
-      - name: Generate file icons
-        working-directory: apps/desktop
-        run: bun run generate:icons
-
-      - name: Compile app with electron-vite
-        working-directory: apps/desktop
-        env:
-          NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY }}
-          NEXT_PUBLIC_POSTHOG_HOST: ${{ secrets.NEXT_PUBLIC_POSTHOG_HOST }}
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          GH_CLIENT_ID: ${{ secrets.GH_CLIENT_ID }}
-          NEXT_PUBLIC_WEB_URL: ${{ secrets.NEXT_PUBLIC_WEB_URL }}
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
-          NEXT_PUBLIC_DOCS_URL: ${{ secrets.NEXT_PUBLIC_DOCS_URL }}
-          NEXT_PUBLIC_STREAMS_URL: ${{ secrets.NEXT_PUBLIC_STREAMS_URL }}
-          NEXT_PUBLIC_ELECTRIC_URL: ${{ secrets.NEXT_PUBLIC_ELECTRIC_URL }}
-          SENTRY_DSN_DESKTOP: ${{ secrets.SENTRY_DSN_DESKTOP }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          RELAY_URL: ${{ secrets.RELAY_URL }}
-          SUPERSET_WORKSPACE_NAME: superset
-        run: bun run compile:app
-
-      - name: Build Electron app
-        working-directory: apps/desktop
-        run: bun run package -- --publish never --config ${{ inputs.electron_builder_config }}
-
-      - name: Verify Linux AppImage + update manifest exist
-        working-directory: apps/desktop
-        run: |
-          ls -la release
-          test -n "$(ls -1 release/*.AppImage 2>/dev/null)" || {
-            echo "::error::No AppImage artifact generated in apps/desktop/release"
-            exit 1
-          }
-          test -n "$(ls -1 release/*-linux.yml 2>/dev/null)" || {
-            echo "::error::No Linux auto-update manifest generated in apps/desktop/release"
-            exit 1
-          }
-
-      - name: Upload AppImage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.artifact_prefix }}-linux-appimage
-          path: apps/desktop/release/*.AppImage
-          retention-days: ${{ inputs.artifact_retention_days }}
-          if-no-files-found: error
-
-      - name: Upload Linux auto-update manifest
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.artifact_prefix }}-linux-update-manifest
-          path: apps/desktop/release/*-linux.yml
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest.yml
           retention-days: ${{ inputs.artifact_retention_days }}
           if-no-files-found: error

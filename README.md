@@ -17,7 +17,7 @@ Works with any CLI agent. Built for local worktree-based development.
 
 <br />
 
-[**Download for macOS**](https://github.com/superset-sh/superset/releases/latest) &nbsp;&bull;&nbsp; [Documentation](https://docs.superset.sh) &nbsp;&bull;&nbsp; [Changelog](https://github.com/superset-sh/superset/releases) &nbsp;&bull;&nbsp; [Discord](https://discord.gg/cZeD9WYcV7)
+[**Download**](https://github.com/superset-sh/superset/releases/latest) &nbsp;&bull;&nbsp; [Documentation](https://docs.superset.sh) &nbsp;&bull;&nbsp; [Changelog](https://github.com/superset-sh/superset/releases) &nbsp;&bull;&nbsp; [Discord](https://discord.gg/cZeD9WYcV7)
 
 <br />
 
@@ -71,7 +71,7 @@ If it runs in a terminal, it runs on Superset
 
 | Requirement | Details |
 |:------------|:--------|
-| **OS** | macOS (Windows/Linux untested) |
+| **OS** | macOS, Windows (beta), Linux (untested) |
 | **Runtime** | [Bun](https://bun.sh/) v1.0+ |
 | **Version Control** | Git 2.20+ |
 | **GitHub CLI** | [gh](https://cli.github.com/) |
@@ -81,7 +81,7 @@ If it runs in a terminal, it runs on Superset
 
 ### Quick Start (Pre-built)
 
-**[Download Superset for macOS](https://github.com/superset-sh/superset/releases/latest)**
+**[Download Superset for macOS or Windows](https://github.com/superset-sh/superset/releases/latest)**
 
 ### Build from Source
 

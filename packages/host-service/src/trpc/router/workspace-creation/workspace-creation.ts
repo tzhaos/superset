@@ -61,6 +61,23 @@ function sweepStaleProgress(): void {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
+function getSetupScriptPath(worktreePath: string): string | null {
+	const supersetDir = join(worktreePath, ".superset");
+	if (process.platform === "win32") {
+		const cmdPath = join(supersetDir, "setup.cmd");
+		if (existsSync(cmdPath)) return cmdPath;
+		const batPath = join(supersetDir, "setup.bat");
+		if (existsSync(batPath)) return batPath;
+		const ps1Path = join(supersetDir, "setup.ps1");
+		if (existsSync(ps1Path)) return `powershell -ExecutionPolicy Bypass -File "${ps1Path}"`;
+	}
+	const shPath = join(supersetDir, "setup.sh");
+	if (existsSync(shPath)) {
+		return `bash "${shPath}"`;
+	}
+	return null;
+}
+
 function safeResolveWorktreePath(repoPath: string, branchName: string): string {
 	const worktreesRoot = resolve(repoPath, ".worktrees");
 	const worktreePath = resolve(worktreesRoot, branchName);
@@ -498,14 +515,14 @@ export const workspaceCreationRouter = router({
 			const warnings: string[] = [];
 
 			if (input.composer.runSetupScript) {
-				const setupScriptPath = join(worktreePath, ".superset", "setup.sh");
-				if (existsSync(setupScriptPath)) {
+				const setupScriptPath = getSetupScriptPath(worktreePath);
+				if (setupScriptPath) {
 					const terminalId = crypto.randomUUID();
 					const result = createTerminalSessionInternal({
 						terminalId,
 						workspaceId: cloudRow.id,
 						db: ctx.db,
-						initialCommand: `bash "${setupScriptPath}"`,
+						initialCommand: setupScriptPath,
 					});
 					if ("error" in result) {
 						warnings.push(`Failed to start setup terminal: ${result.error}`);
